@@ -1,0 +1,72 @@
+import pandas as pd
+import numpy as np
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import spacy
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from gensim.models import Word2Vec
+
+nltk.download('punkt')
+nltk.download('stopwords')
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'\W', ' ', text)
+    text = re.sub(r'\d+', '', text)
+    tokens = word_tokenize(text)
+    stop_words = set(stopwords.words('english'))
+    tokens = [word for word in tokens if word not in stop_words]
+    text = ' '.join(tokens)
+    return text
+
+resumes = pd.read_csv('resumes.csv')
+job_descriptions = pd.read_csv('job_descriptions.csv')
+
+resumes['processed_text'] = resumes['text'].apply(preprocess_text)
+job_descriptions['processed_text'] = job_descriptions['text'].apply(preprocess_text)
+
+tfidf = TfidfVectorizer()
+resume_tfidf = tfidf.fit_transform(resumes['processed_text'])
+job_desc_tfidf = tfidf.transform(job_descriptions['processed_text'])
+
+cosine_similarities = cosine_similarity(resume_tfidf, job_desc_tfidf)
+
+def rank_resumes(cosine_similarities, resumes):
+    ranked_resumes = []
+    for i, job_similarities in enumerate(cosine_similarities.T):
+        ranked_indices = np.argsort(job_similarities)[::-1]
+        ranked_resumes.append(resumes.iloc[ranked_indices])
+    return ranked_resumes
+
+ranked_resumes = rank_resumes(cosine_similarities, resumes)
+
+for i, ranked_resume in enumerate(ranked_resumes):
+    print(f"Top 5 Resumes for Job Description {i+1}:")
+    print(ranked_resume.head(5))
+    print("\n")
+
+nlp = spacy.load('en_core_web_sm')
+
+def get_word2vec_embeddings(texts):
+    sentences = [word_tokenize(text) for text in texts]
+    model = Word2Vec(sentences, vector_size=100, window=5, min_count=1, workers=4)
+    embeddings = [np.mean([model.wv[word] for word in sentence if word in model.wv] or [np.zeros(100)], axis=0) for sentence in sentences]
+    return np.array(embeddings)
+
+resume_embeddings = get_word2vec_embeddings(resumes['processed_text'])
+job_desc_embeddings = get_word2vec_embeddings(job_descriptions['processed_text'])
+
+cosine_similarities_w2v = cosine_similarity(resume_embeddings, job_desc_embeddings)
+
+ranked_resumes_w2v = rank_resumes(cosine_similarities_w2v, resumes)
+
+for i, ranked_resume in enumerate(ranked_resumes_w2v):
+    print(f"Top 5 Resumes for Job Description {i+1} (Word2Vec):")
+    print(ranked_resume.head(5))
+    print("\n")
+
+for i, ranked_resume in enumerate(ranked_resumes):
+    ranked_resume.to_csv(f'ranked_resumes_job_{i+1}.csv', index=False)
